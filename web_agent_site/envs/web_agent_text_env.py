@@ -81,7 +81,8 @@ class WebAgentTextEnv(gym.Env):
         self.prev_actions = []
         self.num_prev_obs = self.kwargs.get('num_prev_obs', 0)
         self.num_prev_actions = self.kwargs.get('num_prev_actions', 0)
-        self.reset()
+        if self.kwargs.get('auto_reset', True):
+            self.reset()
 
     def step(self, action):
         """
@@ -237,8 +238,14 @@ class WebAgentTextEnv(gym.Env):
                 observation += processed_t + '\n'
             return observation
     
-    def reset(self, session=None, instruction_text=None):
-        """Create a new session and reset environment variables"""
+    def reset(self, session=None, instruction_text=None, goal_idx=None):
+        """Create a new session and reset environment variables.
+
+        ``goal_idx`` is an optional C/S-service extension. It fixes the goal
+        selected by ``SimServer.receive`` while preserving the external
+        ``session`` identifier, so clients can request reproducible episodes
+        without encoding the goal id into the session id.
+        """
         session_int = None
         if session is not None:
             self.session = str(session)
@@ -246,6 +253,8 @@ class WebAgentTextEnv(gym.Env):
                 session_int = session
         else:
             self.session = ''.join(random.choices(string.ascii_lowercase, k=10))
+        if goal_idx is not None:
+            session_int = int(goal_idx)
         if self.session_prefix is not None:
             self.session = self.session_prefix + self.session
 
