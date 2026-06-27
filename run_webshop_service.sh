@@ -3,18 +3,16 @@ set -euo pipefail
 
 HOST=${HOST:-0.0.0.0}
 PORT=${PORT:-3001}
-NUM_PRODUCTS=${NUM_PRODUCTS:-1000}
 OBSERVATION_MODE=${OBSERVATION_MODE:-text}
+SEED=${SEED:-0}
 
 ARGS=(
   --host "${HOST}"
   --port "${PORT}"
   --observation-mode "${OBSERVATION_MODE}"
+  --seed "${SEED}"
 )
 
-if [[ -n "${NUM_PRODUCTS}" && "${NUM_PRODUCTS}" != "none" && "${NUM_PRODUCTS}" != "None" ]]; then
-  ARGS+=(--num-products "${NUM_PRODUCTS}")
-fi
 if [[ "${HUMAN_GOALS:-0}" == "1" ]]; then
   ARGS+=(--human-goals)
 fi
@@ -26,6 +24,9 @@ if [[ "${SHOW_ATTRS:-0}" == "1" ]]; then
 fi
 if [[ -n "${WEBSHOP_FILE_PATH:-}" ]]; then
   ARGS+=(--file-path "${WEBSHOP_FILE_PATH}")
+fi
+if [[ -n "${WEBSHOP_ATTR_PATH:-}" ]]; then
+  ARGS+=(--attr-path "${WEBSHOP_ATTR_PATH}")
 fi
 
 python -m web_agent_site.service.api "${ARGS[@]}"

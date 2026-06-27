@@ -2,6 +2,7 @@ import gym
 import json
 import random
 import string
+import threading
 import time
 import torch
 
@@ -24,6 +25,7 @@ from web_agent_site.engine.engine import (
 from web_agent_site.engine.goal import get_reward, get_goals
 from web_agent_site.utils import (
     DEFAULT_FILE_PATH,
+    DEFAULT_ATTR_PATH,
     FEAT_CONV,
     FEAT_IDS,
     random_idx
@@ -36,6 +38,8 @@ class WebAgentTextEnv(gym.Env):
             self,
             observation_mode='html',
             file_path=DEFAULT_FILE_PATH,
+            attr_path=DEFAULT_ATTR_PATH,
+            base_url='http://127.0.0.1:3000',
             server=None,
             **kwargs
         ):
@@ -57,17 +61,26 @@ class WebAgentTextEnv(gym.Env):
         self.observation_mode = observation_mode
         self.kwargs = kwargs
 
-        self.file_path = file_path
+        self._seed = self.kwargs.get('seed', 42)
+        if server is None:
+            random.seed(self._seed)
+            np.random.seed(self._seed)
+            torch.manual_seed(self._seed)
 
-        self.base_url = 'http://127.0.0.1:3000'
+        self.file_path = file_path
+        self.attr_path = attr_path
+
+        self.base_url = base_url
         self.server = SimServer(
-            self.base_url,
-            self.file_path,
-            self.kwargs.get('filter_goals'),
-            self.kwargs.get('limit_goals', -1),
-            self.kwargs.get('num_products'),
-            self.kwargs.get('human_goals'),
-            self.kwargs.get('show_attrs', False),
+            base_url=self.base_url,
+            file_path=self.file_path,
+            attr_path=self.attr_path,
+            filter_goals=self.kwargs.get('filter_goals'),
+            limit_goals=self.kwargs.get('limit_goals', -1),
+            num_products=self.kwargs.get('num_products'),
+            human_goals=self.kwargs.get('human_goals'),
+            show_attrs=self.kwargs.get('show_attrs', False),
+            seed=self._seed,
         ) if server is None else server
         self.browser = SimBrowser(self.server)
 
@@ -238,7 +251,7 @@ class WebAgentTextEnv(gym.Env):
                 observation += processed_t + '\n'
             return observation
     
-    def reset(self, session=None, instruction_text=None, goal_idx=None):
+    def reset(self, session=None, instruction_text=None, goal_idx=None, goal_seed=None):
         """Create a new session and reset environment variables.
 
         ``goal_idx`` is an optional C/S-service extension. It fixes the goal
@@ -259,7 +272,7 @@ class WebAgentTextEnv(gym.Env):
             self.session = self.session_prefix + self.session
 
         init_url = f'{self.base_url}/{self.session}'
-        self.browser.get(init_url, session_id=self.session, session_int=session_int)
+        self.browser.get(init_url, session_id=self.session, session_int=session_int, goal_seed=goal_seed)
 
         self.text_to_clickable = None
         self.instruction_text = self.get_instruction_text() if instruction_text is None else instruction_text
@@ -288,11 +301,13 @@ class SimServer:
         self,
         base_url,
         file_path,
+        attr_path=DEFAULT_ATTR_PATH,
         filter_goals=None,
         limit_goals=-1,
         num_products=None,
         human_goals=0,
         show_attrs=False,
+        seed=42,
     ):
         """
         Constructor for simulated server serving WebShop application
@@ -305,33 +320,17 @@ class SimServer:
         """
         # Load all products, goals, and search engine
         self.base_url = base_url
+        self.human_goals = human_goals
+        self.filter_goals = filter_goals
+        self.limit_goals = limit_goals
+        self.seed = seed
         self.all_products, self.product_item_dict, self.product_prices, _ = \
-            load_products(filepath=file_path, num_products=num_products, human_goals=human_goals)
+            load_products(filepath=file_path, attrpath=attr_path, num_products=num_products, human_goals=human_goals)
         self.search_engine = init_search_engine(num_products=num_products)
-        self.goals = get_goals(self.all_products, self.product_prices, human_goals)
         self.show_attrs = show_attrs
-
-        # Fix outcome for random shuffling of goals
-        random.seed(233)
-        random.shuffle(self.goals)
-
-        # Apply `filter_goals` parameter if exists to select speific goal(s)
-        if filter_goals is not None:
-            self.goals = [
-                goal for (i, goal) in enumerate(self.goals)
-                if filter_goals(i, goal)
-            ]
-        
-        # Imposes `limit` on goals via random selection
-        if limit_goals != -1 and limit_goals < len(self.goals):
-            self.weights = [goal['weight'] for goal in self.goals]
-            self.cum_weights = [0] + np.cumsum(self.weights).tolist()
-            idxs = []
-            while len(idxs) < limit_goals:
-                idx = random_idx(self.cum_weights)
-                if idx not in idxs:
-                    idxs.append(idx)
-            self.goals = [self.goals[i] for i in idxs]
+        self._goals_by_seed = dict()
+        self._goal_cache_lock = threading.Lock()
+        self.goals = self.get_goals_for_seed(seed)
         print(f'Loaded {len(self.goals)} goals.')
 
         # Set extraneous housekeeping variables
@@ -342,6 +341,43 @@ class SimServer:
         self.render_time = 0
         self.sample_time = 0
         self.assigned_instruction_text = None  # TODO: very hacky, should remove
+
+    def get_goals_for_seed(self, seed=None):
+        """Return the seeded synthetic goal list for ``seed``.
+
+        The WebShop synthetic goal generator uses Python ``random``.  Seeding
+        before goal construction and again before shuffling makes the per-worker
+        goal order reproducible while sharing one loaded product table and
+        search index.
+        """
+        seed = self.seed if seed is None else int(seed)
+        with self._goal_cache_lock:
+            if seed in self._goals_by_seed:
+                return self._goals_by_seed[seed]
+
+            random.seed(seed)
+            goals = get_goals(self.all_products, self.product_prices, self.human_goals)
+            random.seed(seed)
+            random.shuffle(goals)
+
+            if self.filter_goals is not None:
+                goals = [
+                    goal for (i, goal) in enumerate(goals)
+                    if self.filter_goals(i, goal)
+                ]
+
+            if self.limit_goals != -1 and self.limit_goals < len(goals):
+                weights = [goal['weight'] for goal in goals]
+                cum_weights = [0] + np.cumsum(weights).tolist()
+                idxs = []
+                while len(idxs) < self.limit_goals:
+                    idx = random_idx(cum_weights)
+                    if idx not in idxs:
+                        idxs.append(idx)
+                goals = [goals[i] for i in idxs]
+
+            self._goals_by_seed[seed] = goals
+            return goals
         
     @app.route('/', methods=['GET', 'POST'])
     def index(self, session_id, **kwargs):
@@ -510,15 +546,16 @@ class SimServer:
         )
         return html, url, reward
     
-    def receive(self, session_id, current_url, session_int=None, **kwargs):
+    def receive(self, session_id, current_url, session_int=None, goal_seed=None, **kwargs):
         """Map action to the corresponding page"""
         status = dict(reward=0.0, done=False)
 
         with app.app_context(), app.test_request_context():
             # Create/determine goal, instruction_text from current session
             if session_id not in self.user_sessions:
+                goals = self.get_goals_for_seed(goal_seed)
                 idx = session_int if (session_int is not None and isinstance(session_int, int)) else random_idx(self.cum_weights) 
-                goal = self.goals[idx]
+                goal = goals[idx]
                 instruction_text = goal['instruction_text']
                 self.user_sessions[session_id] = {'goal': goal, 'done': False}
             else:
@@ -619,11 +656,11 @@ class SimBrowser:
         self.page_source = None
         self.session_id = None
 
-    def get(self, url, session_id=None, session_int=None):
+    def get(self, url, session_id=None, session_int=None, goal_seed=None):
         """Set browser variables to corresponding link, page HTML for URL"""
         self.session_id = url.split('/')[-1] if session_id is None else session_id
         self.page_source, _, _ = \
-            self.server.receive(self.session_id, self.current_url, session_int=session_int)
+            self.server.receive(self.session_id, self.current_url, session_int=session_int, goal_seed=goal_seed)
         self.current_url = url
     
     def click(self, clickable_name, text_to_clickable):
