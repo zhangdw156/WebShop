@@ -20,6 +20,12 @@ from web_agent_site.envs.web_agent_text_env import SimServer, WebAgentTextEnv
 from web_agent_site.utils import DEFAULT_ATTR_PATH, DEFAULT_FILE_PATH
 
 
+def _optional_num_products(value: str) -> Optional[int]:
+    if value.lower() in {"none", "null", "all"}:
+        return None
+    return int(value)
+
+
 @dataclass(frozen=True)
 class ServiceConfig:
     """Static WebShop backend configuration.
@@ -33,6 +39,7 @@ class ServiceConfig:
     attr_path: str = DEFAULT_ATTR_PATH
     base_url: str = "http://127.0.0.1:3000"
     observation_mode: str = "text"
+    num_products: Optional[int] = 1000
     human_goals: bool = False
     limit_goals: int = -1
     show_attrs: bool = False
@@ -51,6 +58,7 @@ class WebShopService:
             file_path=self.config.file_path,
             attr_path=self.config.attr_path,
             limit_goals=self.config.limit_goals,
+            num_products=self.config.num_products,
             human_goals=self.config.human_goals,
             show_attrs=self.config.show_attrs,
             seed=self.config.seed,
@@ -72,6 +80,7 @@ class WebShopService:
             "goals": self.goal_count,
             "goal_count": self.goal_count,
             "observation_mode": self.config.observation_mode,
+            "num_products": self.config.num_products,
             "seed": self.config.seed,
         }
 
@@ -272,6 +281,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--attr-path", default=DEFAULT_ATTR_PATH)
     parser.add_argument("--base-url", default="http://127.0.0.1:3000")
     parser.add_argument("--observation-mode", default="text", choices=["html", "text", "text_rich", "url"])
+    parser.add_argument("--num-products", type=_optional_num_products, default=1000)
     parser.add_argument("--human-goals", action="store_true")
     parser.add_argument("--limit-goals", type=int, default=-1)
     parser.add_argument("--show-attrs", action="store_true")
@@ -289,6 +299,7 @@ def main() -> None:
         attr_path=args.attr_path,
         base_url=args.base_url,
         observation_mode=args.observation_mode,
+        num_products=args.num_products,
         human_goals=args.human_goals,
         limit_goals=args.limit_goals,
         show_attrs=args.show_attrs,

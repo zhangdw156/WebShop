@@ -3,6 +3,7 @@ set -euo pipefail
 
 HOST=${HOST:-0.0.0.0}
 PORT=${PORT:-3001}
+NUM_PRODUCTS=${NUM_PRODUCTS:-1000}
 OBSERVATION_MODE=${OBSERVATION_MODE:-text}
 SEED=${SEED:-0}
 
@@ -13,6 +14,9 @@ ARGS=(
   --seed "${SEED}"
 )
 
+if [[ -n "${NUM_PRODUCTS}" ]]; then
+  ARGS+=(--num-products "${NUM_PRODUCTS}")
+fi
 if [[ "${HUMAN_GOALS:-0}" == "1" ]]; then
   ARGS+=(--human-goals)
 fi
