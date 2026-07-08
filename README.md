@@ -61,7 +61,7 @@ This fork defaults to the 1,000-product small setup and intentionally only suppo
 * Installs Python dependencies listed in `requirements.txt`
 * Installs `faiss-cpu` and `openjdk=11` with `conda` when available, otherwise `mamba`
 * Downloads the raw small product and instruction data from `zhangdw/webshop` on Hugging Face
-* Downloads `spaCy en_core_web_lg` model
+* Downloads the `spaCy en_core_web_sm` model used by WebShop goal parsing
 * Constructs the search engine index from the small product/instruction data
 
 6. The WebShop service defaults to 1,000 products. The raw small data archive downloaded by setup contains:

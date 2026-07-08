@@ -130,8 +130,8 @@ pip install -r requirements.txt
 # Download the small dataset from Hugging Face into data/.
 download_small_data
 
-# Download spaCy large NLP model
-python -m spacy download en_core_web_lg
+# Download the spaCy English model used by web_agent_site/engine/goal.py
+python -m spacy download en_core_web_sm
 
 # Build search engine index
 cd search_engine

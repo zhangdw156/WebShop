@@ -64,8 +64,7 @@ Fails, because wrong versions installed
 
 ## Running setup.sh
 Fails at:
-- `python -m spacy download en_core_web_lg
-`
+- `python -m spacy download en_core_web_sm`
 
 **Spacy Fix**:
 Interestingly:
