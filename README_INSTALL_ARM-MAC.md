@@ -16,10 +16,13 @@ Our code is implemented in Python. To setup, do the following:
 > conda create -n webshop python=3.8.13
 > conda activate webshop
 ```
-5. Install requirements into the `webshop` virtual environment via the `setup.sh` script
+5. Install requirements into the `webshop` virtual environment via the `setup_arm.sh` script
 ```sh
-> ./setup_arm.sh [-d small|all]
+> ./setup_arm.sh
+# or, equivalently:
+> ./setup_arm.sh -d small
 ```
+This fork defaults to the 1,000-product small setup and intentionally only supports small mode. The setup script downloads the raw small data archive from `zhangdw/webshop` on Hugging Face.
 
 
 

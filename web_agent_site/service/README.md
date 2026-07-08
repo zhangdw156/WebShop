@@ -6,7 +6,7 @@ Small synthetic setup:
 
 ```bash
 cd ../WebShop
-./setup.sh -d small
+./setup.sh
 PORT=3001 SEED=0 ./run_webshop_service.sh
 ```
 
