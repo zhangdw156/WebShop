@@ -57,6 +57,10 @@ Our code is implemented in Python. To setup, do the following:
 # or, equivalently:
 > ./setup.sh -d small
 ```
+The setup script tries `huggingface.co` first and automatically falls back to
+`hf-mirror.com` if the official endpoint is unavailable. Set `HF_ENDPOINT` only
+when you want to force a specific endpoint.
+
 This fork defaults to the 1,000-product small setup and intentionally only supports small mode. The setup script performs several actions in the following order:
 * Installs Python dependencies listed in `requirements.txt`
 * Installs `faiss-cpu` and `openjdk=11` with `conda` when available, otherwise `mamba`

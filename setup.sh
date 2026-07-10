@@ -4,7 +4,16 @@ set -euo pipefail
 DATA_MODE="small"
 HF_DATASET_REPO="${HF_DATASET_REPO:-zhangdw/webshop}"
 HF_SMALL_ARCHIVE_PATH="${HF_SMALL_ARCHIVE_PATH:-raw/webshop-small.tar.gz}"
-HF_SMALL_ARCHIVE_URL="${HF_SMALL_ARCHIVE_URL:-https://huggingface.co/datasets/${HF_DATASET_REPO}/resolve/main/${HF_SMALL_ARCHIVE_PATH}}"
+HF_OFFICIAL_ENDPOINT="${HF_OFFICIAL_ENDPOINT:-https://huggingface.co}"
+HF_MIRROR_ENDPOINT="${HF_MIRROR_ENDPOINT:-https://hf-mirror.com}"
+HF_ENDPOINT="${HF_ENDPOINT:-}"
+HF_DOWNLOAD_TIMEOUT="${HF_DOWNLOAD_TIMEOUT:-20}"
+HF_OFFICIAL_ENDPOINT="${HF_OFFICIAL_ENDPOINT%/}"
+HF_MIRROR_ENDPOINT="${HF_MIRROR_ENDPOINT%/}"
+HF_ENDPOINT="${HF_ENDPOINT%/}"
+HF_SMALL_ARCHIVE_URL="${HF_SMALL_ARCHIVE_URL:-}"
+HF_SPACY_MODEL_PATH="${HF_SPACY_MODEL_PATH:-models/spacy/en_core_web_sm-3.3.0-py3-none-any.whl}"
+HF_SPACY_MODEL_URL="${HF_SPACY_MODEL_URL:-}"
 
 helpFunction()
 {
@@ -16,9 +25,16 @@ Sets up WebShop with the small dataset. This fork defaults to small mode and
 only supports small mode; '-d all' is intentionally unsupported.
 
 Environment overrides:
+  HF_ENDPOINT            Force a single Hugging Face endpoint
+                         (unset: try official, then mirror automatically)
+  HF_OFFICIAL_ENDPOINT   Official endpoint (default: https://huggingface.co)
+  HF_MIRROR_ENDPOINT     Automatic fallback endpoint (default: https://hf-mirror.com)
+  HF_DOWNLOAD_TIMEOUT    Per-endpoint timeout in seconds (default: 20)
   HF_DATASET_REPO        Dataset repo to download from (default: zhangdw/webshop)
   HF_SMALL_ARCHIVE_PATH  Archive path in the dataset repo (default: raw/webshop-small.tar.gz)
-  HF_SMALL_ARCHIVE_URL   Full archive URL override
+  HF_SMALL_ARCHIVE_URL   Full archive URL override (disables endpoint fallback)
+  HF_SPACY_MODEL_PATH    spaCy wheel path in the dataset repo
+  HF_SPACY_MODEL_URL     Full spaCy wheel URL override (disables endpoint fallback)
   WEBSHOP_FORCE_DATA_DOWNLOAD=1  Re-download even if data files already exist
 EOF
   exit "${exit_code}"
@@ -53,6 +69,63 @@ EOF
   fi
 }
 
+download_url() {
+  local url="$1"
+  local output="$2"
+  python - "${url}" "${output}" "${HF_DOWNLOAD_TIMEOUT}" <<'PY'
+import sys
+import urllib.request
+
+url, output, timeout = sys.argv[1], sys.argv[2], float(sys.argv[3])
+try:
+    with urllib.request.urlopen(url, timeout=timeout) as response, open(output, "wb") as handle:
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            handle.write(chunk)
+except Exception as exc:
+    print(f"[ERROR]: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
+download_hf_file() {
+  local repo_path="$1"
+  local output="$2"
+  local override_url="${3:-}"
+  local -a urls=()
+
+  if [[ -n "${override_url}" ]]; then
+    urls=("${override_url}")
+  elif [[ -n "${HF_ENDPOINT}" ]]; then
+    urls=("${HF_ENDPOINT}/datasets/${HF_DATASET_REPO}/resolve/main/${repo_path}")
+  else
+    urls=(
+      "${HF_OFFICIAL_ENDPOINT}/datasets/${HF_DATASET_REPO}/resolve/main/${repo_path}"
+      "${HF_MIRROR_ENDPOINT}/datasets/${HF_DATASET_REPO}/resolve/main/${repo_path}"
+    )
+  fi
+
+  local url
+  local attempt=0
+  local total="${#urls[@]}"
+  for url in "${urls[@]}"; do
+    attempt=$((attempt + 1))
+    echo "Downloading ${repo_path} from ${url}"
+    if download_url "${url}" "${output}"; then
+      return 0
+    fi
+    rm -f "${output}"
+    if (( attempt < total )); then
+      echo "[WARN]: Download failed; trying the fallback Hugging Face endpoint." >&2
+    fi
+  done
+
+  echo "[ERROR]: Unable to download ${repo_path} from the configured Hugging Face endpoint(s)." >&2
+  return 1
+}
+
 required_data_present() {
   [[ -s data/items_shuffle_1000.json ]] && \
   [[ -s data/items_ins_v2_1000.json ]] && \
@@ -71,19 +144,7 @@ download_small_data() {
   trap 'rm -rf "${tmpdir}"' RETURN
   local archive="${tmpdir}/webshop-small.tar.gz"
 
-  echo "Downloading WebShop small data from ${HF_SMALL_ARCHIVE_URL}"
-  python - "${HF_SMALL_ARCHIVE_URL}" "${archive}" <<'PY'
-import sys
-import urllib.request
-
-url, output = sys.argv[1], sys.argv[2]
-with urllib.request.urlopen(url) as response, open(output, "wb") as handle:
-    while True:
-        chunk = response.read(1024 * 1024)
-        if not chunk:
-            break
-        handle.write(chunk)
-PY
+  download_hf_file "${HF_SMALL_ARCHIVE_PATH}" "${archive}" "${HF_SMALL_ARCHIVE_URL}"
 
   python - "${archive}" "$(pwd)" <<'PY'
 import os
@@ -117,6 +178,23 @@ PY
   echo "WebShop small data is ready under data/."
 }
 
+install_spacy_model() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  trap 'rm -rf "${tmpdir}"' RETURN
+  local wheel="${tmpdir}/$(basename "${HF_SPACY_MODEL_PATH}")"
+
+  download_hf_file "${HF_SPACY_MODEL_PATH}" "${wheel}" "${HF_SPACY_MODEL_URL}"
+
+  python -m pip install --no-deps "${wheel}"
+  python - <<'PY'
+import spacy
+
+spacy.load("en_core_web_sm")
+PY
+  echo "spaCy model en_core_web_sm is ready."
+}
+
 CONDA_TOOL=$(choose_conda_tool)
 echo "Using ${CONDA_TOOL} for environment packages."
 
@@ -130,8 +208,8 @@ pip install -r requirements.txt
 # Download the small dataset from Hugging Face into data/.
 download_small_data
 
-# Download the spaCy English model used by web_agent_site/engine/goal.py
-python -m spacy download en_core_web_sm
+# Install the spaCy English model used by web_agent_site/engine/goal.py.
+install_spacy_model
 
 # Build search engine index
 cd search_engine
